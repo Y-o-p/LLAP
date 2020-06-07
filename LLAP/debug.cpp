@@ -16,6 +16,8 @@ namespace LLAP {
 			break;
 		case ERROR:
 			tag_s = "{ERROR}: ";
+			std::cerr << "[" << time_s << "]" << tag_s << string << "\n";
+			throw std::runtime_error(string);
 			break;
 		default:
 			break;
