@@ -64,8 +64,13 @@ namespace LLAP {
 		void pick_gpu();
 		bool is_gpu_suitable(VkPhysicalDevice device);
 
+		// Logical device
+		VkDevice device;
+		void create_logical_device();
+
 		// Queue
 		QueueFamilyIndices find_queue_families(VkPhysicalDevice device);
+		VkQueue graphics_queue;
 
 		void create_instance();
 		void init_vulkan();
