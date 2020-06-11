@@ -13,6 +13,7 @@
 #include <algorithm>
 
 #include "debug.h"
+#include "io.h"
 
 namespace LLAP {
 
@@ -105,6 +106,16 @@ namespace LLAP {
 		VkQueue graphics_queue;
 		VkQueue present_queue;
 		QueueFamilyIndices find_queue_families(VkPhysicalDevice device);
+
+		// Graphics pipeline
+		VkPipeline graphics_pipeline;
+		VkPipelineLayout pipeline_layout;
+		void create_graphics_pipeline();
+		VkShaderModule create_shader_module(const std::vector<char>& code);
+
+		// Render pass
+		VkRenderPass render_pass;
+		void create_render_pass();
 
 		void create_instance();
 		void init_vulkan();
