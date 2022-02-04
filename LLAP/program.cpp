@@ -130,6 +130,29 @@ namespace LLAP {
 		}
 	}
 
+	void Program::create_frame_buffers() {
+		swap_chain_framebuffers.resize(swap_chain_image_views.size());
+
+		for (size_t i = 0; i < swap_chain_image_views.size(); i++) {
+			VkImageView attachments[] = {
+				swap_chain_image_views[i]
+			};
+
+			VkFramebufferCreateInfo framebuffer_info{};
+			framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebuffer_info.renderPass = render_pass;
+			framebuffer_info.attachmentCount = 1;
+			framebuffer_info.pAttachments = attachments;
+			framebuffer_info.width = swap_chain_extent.width;
+			framebuffer_info.height = swap_chain_extent.height;
+			framebuffer_info.layers = 1;
+
+			if (vkCreateFramebuffer(device, &framebuffer_info, nullptr, &swap_chain_framebuffers[i]) != VK_SUCCESS) {
+				log("Failed to create framebuffer", ERROR);
+			}
+		}
+	}
+
 	SwapChainSupportDetails Program::query_swap_chain_support(VkPhysicalDevice device)
 	{
 		SwapChainSupportDetails details;
@@ -425,6 +448,63 @@ namespace LLAP {
 		return indices;
 	}
 
+	void Program::create_command_pool() {
+		QueueFamilyIndices queue_family_indices = find_queue_families(physical_device);
+
+		VkCommandPoolCreateInfo pool_info{};
+		pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		pool_info.queueFamilyIndex = queue_family_indices.graphics_family.value();
+		pool_info.flags = 0;
+
+		if (vkCreateCommandPool(device, &pool_info, nullptr, &command_pool) != VK_SUCCESS) {
+			log("Failed to create command pool", ERROR);
+		}
+	}
+
+	void Program::create_command_buffers() {
+		command_buffers.resize(swap_chain_framebuffers.size());
+
+		VkCommandBufferAllocateInfo alloc_info{};
+		alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		alloc_info.commandPool = command_pool;
+		alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		alloc_info.commandBufferCount = static_cast<uint32_t>(command_buffers.size());
+
+		if (vkAllocateCommandBuffers(device, &alloc_info, command_buffers.data()) != VK_SUCCESS) {
+			log("failed to allocate command buffers", ERROR);
+		}
+
+		for (size_t i = 0; i < command_buffers.size(); i++) {
+			VkCommandBufferBeginInfo begin_info{};
+			begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			begin_info.flags = 0;
+			begin_info.pInheritanceInfo = nullptr;
+
+			if (vkBeginCommandBuffer(command_buffers[i], &begin_info) != VK_SUCCESS) {
+				log("failed to begin recording command buffer", ERROR);
+			}
+
+			VkRenderPassBeginInfo render_pass_info{};
+			render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			render_pass_info.renderPass = render_pass;
+			render_pass_info.framebuffer = swap_chain_framebuffers[i];
+			render_pass_info.renderArea.offset = { 0, 0 };
+
+			VkClearValue clear_color = { 0.0f, 0.0f, 0.0f, 1.0f };
+			render_pass_info.clearValueCount = 1;
+			render_pass_info.pClearValues = &clear_color;
+
+			vkCmdBeginRenderPass(command_buffers[i], &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+			vkCmdBindPipeline(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+			vkCmdDraw(command_buffers[i], 3, 1, 0, 0);
+			vkCmdEndRenderPass(command_buffers[i]);
+			if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS) {
+				log("Failed to record command buffer!", ERROR);
+			}
+		}
+	}
+
 	void Program::create_graphics_pipeline() {
 		auto vert_shader_code = read_file("vert.spv");
 		auto frag_shader_code = read_file("frag.spv");
@@ -602,15 +682,79 @@ namespace LLAP {
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &attachment_reference;
 
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
 		VkRenderPassCreateInfo render_pass_info{};
 		render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 		render_pass_info.attachmentCount = 1;
 		render_pass_info.pAttachments = &color_attachment;
 		render_pass_info.subpassCount = 1;
 		render_pass_info.pSubpasses = &subpass;
+		render_pass_info.dependencyCount = 1;
+		render_pass_info.pDependencies = &dependency;
 
 		if (vkCreateRenderPass(device, &render_pass_info, nullptr, &render_pass)) {
 			log("Failed to create render pass", ERROR);
+		}
+	}
+
+	void Program::draw_frame() {
+		uint32_t image_index;
+		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_s, VK_NULL_HANDLE, &image_index);
+
+		VkSubmitInfo submit_info{};
+		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
+		VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+		submit_info.waitSemaphoreCount = 1;
+		submit_info.pWaitSemaphores = wait_semaphores;
+		submit_info.pWaitDstStageMask = wait_stages;
+		submit_info.commandBufferCount = 1;
+		submit_info.pCommandBuffers = &command_buffers[image_index];
+		VkSemaphore signal_semaphores[] = { render_finished_semaphores[current_frame] };
+		submit_info.signalSemaphoreCount = 1;
+		submit_info.pSignalSemaphores = signal_semaphores;
+		if (vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS) {
+			log("Failed to submit draw command buffer", ERROR);
+		}
+
+		VkPresentInfoKHR present_info{};
+		present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		present_info.waitSemaphoreCount = 1;
+		present_info.pWaitSemaphores = signal_semaphores;
+
+		VkSwapchainKHR swap_chains[] = { swap_chain };
+		present_info.swapchainCount = 1;
+		present_info.pSwapchains = swap_chains;
+		present_info.pImageIndices = &image_index;
+		present_info.pResults = nullptr;
+
+		vkQueuePresentKHR(present_queue, &present_info);
+
+		vkQueueWaitIdle(present_queue);
+
+		current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+	}
+
+	void Program::create_semaphores() {
+		image_available_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		render_finished_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		
+		VkSemaphoreCreateInfo semaphore_info{};
+		semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			if (vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphores[i]) != VK_SUCCESS ||
+				vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphores[i]) != VK_SUCCESS) {
+
+				log("failed to create semaphores for a frame", ERROR);
+			}
 		}
 	}
 
@@ -687,17 +831,36 @@ namespace LLAP {
 		pick_gpu();
 		create_logical_device();
 		create_swap_chain();
+		create_image_views();
 		create_render_pass();
 		create_graphics_pipeline();
+		create_frame_buffers();
+		create_command_pool();
+		create_command_buffers();
+		create_semaphores();
 	}
 
 	void Program::loop_program() {
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents();
+			draw_frame();
 		}
+
+		vkDeviceWaitIdle(device);
 	}
 
 	void Program::cleanup_program() {
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
+			vkDestroySemaphore(device, image_available_semaphores[i], nullptr);
+		}
+		
+		vkDestroyCommandPool(device, command_pool, nullptr);
+		
+		for (auto framebuffer : swap_chain_framebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+		
 		for (auto image_view : swap_chain_image_views) {
 			vkDestroyImageView(device, image_view, nullptr);
 		}

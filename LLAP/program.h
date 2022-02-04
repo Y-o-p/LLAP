@@ -32,6 +32,7 @@ namespace LLAP {
 	protected:
 		GLFWwindow* window;
 		static const int WIDTH = 800, HEIGHT = 600;
+		static const int MAX_FRAMES_IN_FLIGHT = 2;
 
 	private:
 		VkInstance instance;
@@ -69,11 +70,13 @@ namespace LLAP {
 		};
 
 		// Swap chain
+		std::vector<VkFramebuffer> swap_chain_framebuffers;
 		VkSwapchainKHR swap_chain;
 		std::vector<VkImage> swap_chain_images;
 		std::vector<VkImageView> swap_chain_image_views;
 		VkFormat swap_chain_image_format;
 		VkExtent2D swap_chain_extent;
+		void create_frame_buffers();
 		SwapChainSupportDetails query_swap_chain_support(VkPhysicalDevice device);
 		VkSurfaceFormatKHR choose_swap_surface_format(const std::vector<VkSurfaceFormatKHR>& available_formats);
 		VkPresentModeKHR choose_swap_present_mode(const std::vector<VkPresentModeKHR>& available_present_modes);
@@ -107,6 +110,12 @@ namespace LLAP {
 		VkQueue present_queue;
 		QueueFamilyIndices find_queue_families(VkPhysicalDevice device);
 
+		// Command buffers
+		VkCommandPool command_pool;
+		std::vector<VkCommandBuffer> command_buffers;
+		void create_command_pool();
+		void create_command_buffers();
+
 		// Graphics pipeline
 		VkPipeline graphics_pipeline;
 		VkPipelineLayout pipeline_layout;
@@ -116,6 +125,17 @@ namespace LLAP {
 		// Render pass
 		VkRenderPass render_pass;
 		void create_render_pass();
+		void draw_frame();
+
+		// Semaphores
+		VkSemaphore image_available_s;
+		VkSemaphore render_finished_s;
+		void create_semaphores();
+
+		size_t current_frame = 0;
+		std::vector<VkFence> in_flight_fences;
+		std::vector<VkSemaphore> image_available_semaphores;
+		std::vector<VkSemaphore> render_finished_semaphores;
 
 		void create_instance();
 		void init_vulkan();
