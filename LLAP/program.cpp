@@ -705,22 +705,37 @@ namespace LLAP {
 	}
 
 	void Program::draw_frame() {
+		vkWaitForFences(device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
+		
 		uint32_t image_index;
-		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_s, VK_NULL_HANDLE, &image_index);
+		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
+		
+		if (in_flight_images[image_index] != VK_NULL_HANDLE)
+		{
+			vkWaitForFences(device, 1, &in_flight_images[image_index], VK_TRUE, UINT64_MAX);
+		}
+
+		in_flight_images[image_index] = in_flight_fences[current_frame];
 
 		VkSubmitInfo submit_info{};
 		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
 		VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
 		VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 		submit_info.waitSemaphoreCount = 1;
 		submit_info.pWaitSemaphores = wait_semaphores;
 		submit_info.pWaitDstStageMask = wait_stages;
+		
 		submit_info.commandBufferCount = 1;
 		submit_info.pCommandBuffers = &command_buffers[image_index];
+
 		VkSemaphore signal_semaphores[] = { render_finished_semaphores[current_frame] };
 		submit_info.signalSemaphoreCount = 1;
 		submit_info.pSignalSemaphores = signal_semaphores;
-		if (vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS) {
+		
+		vkResetFences(device, 1, &in_flight_fences[current_frame]);
+		
+		if (vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fences[current_frame]) != VK_SUCCESS) {
 			log("Failed to submit draw command buffer", ERROR);
 		}
 
@@ -733,11 +748,10 @@ namespace LLAP {
 		present_info.swapchainCount = 1;
 		present_info.pSwapchains = swap_chains;
 		present_info.pImageIndices = &image_index;
-		present_info.pResults = nullptr;
+		//present_info.pResults = nullptr;
 
 		vkQueuePresentKHR(present_queue, &present_info);
-
-		vkQueueWaitIdle(present_queue);
+		//vkQueueWaitIdle(present_queue);
 
 		current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
@@ -745,13 +759,20 @@ namespace LLAP {
 	void Program::create_semaphores() {
 		image_available_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
 		render_finished_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
-		
+		in_flight_fences.resize(MAX_FRAMES_IN_FLIGHT);
+		in_flight_images.resize(swap_chain_images.size(), VK_NULL_HANDLE);
+
 		VkSemaphoreCreateInfo semaphore_info{};
 		semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
+		VkFenceCreateInfo fence_info{};
+		fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			if (vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphores[i]) != VK_SUCCESS ||
-				vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphores[i]) != VK_SUCCESS) {
+				vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphores[i]) != VK_SUCCESS ||
+				vkCreateFence(device, &fence_info, nullptr, &in_flight_fences[i]) != VK_SUCCESS) {
 
 				log("failed to create semaphores for a frame", ERROR);
 			}
@@ -846,13 +867,14 @@ namespace LLAP {
 			draw_frame();
 		}
 
-		vkDeviceWaitIdle(device);
+		//vkDeviceWaitIdle(device);
 	}
 
 	void Program::cleanup_program() {
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
 			vkDestroySemaphore(device, image_available_semaphores[i], nullptr);
+			vkDestroyFence(device, in_flight_fences[i], nullptr);
 		}
 		
 		vkDestroyCommandPool(device, command_pool, nullptr);
@@ -861,27 +883,22 @@ namespace LLAP {
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
 		}
 		
+		vkDestroyPipeline(device, graphics_pipeline, nullptr);
+		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+		vkDestroyRenderPass(device, render_pass, nullptr);
+
 		for (auto image_view : swap_chain_image_views) {
 			vkDestroyImageView(device, image_view, nullptr);
 		}
-		
+
+		vkDestroySwapchainKHR(device, swap_chain, nullptr);
+		vkDestroyDevice(device, nullptr);
+
 		if (enable_validation_layers) {
 			destroy_debug_utils_messenger_EXT(instance, debug_messenger, nullptr);
 		}
-		
-		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-		vkDestroyPipeline(device, graphics_pipeline, nullptr);
-
-		vkDestroyRenderPass(device, render_pass, nullptr);
-
-		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-
-		vkDestroySwapchainKHR(device, swap_chain, nullptr);
 
 		vkDestroySurfaceKHR(instance, surface, nullptr);
-
-		vkDestroyDevice(device, nullptr);
-
 		vkDestroyInstance(instance, nullptr);
 
 		glfwDestroyWindow(window);
